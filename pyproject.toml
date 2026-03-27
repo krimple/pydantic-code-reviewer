@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "code-reviewer"
+version = "0.1.0"
+description = "AI-powered code review application using Pydantic AI agents"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic-ai>=0.1.0",
+    "pydantic>=2.0",
+    "opentelemetry-api>=1.30.0",
+    "opentelemetry-sdk>=1.30.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.30.0",
+    "opentelemetry-semantic-conventions>=0.51b0",
+    "opentelemetry-instrumentation-httpx>=0.51b0",
+    "httpx",
+    "python-dotenv",
+    "gitpython",
+    "radon",
+    "bandit",
+    "pip-audit",
+    "vulture",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-mock",
+    "coverage",
+    "ruff",
+]
+
+[project.scripts]
+code-reviewer = "code_reviewer.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/code_reviewer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py311"
