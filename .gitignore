@@ -16,3 +16,4 @@ env/
 htmlcov/
 .coverage
 cloned_repos/
+.idea/

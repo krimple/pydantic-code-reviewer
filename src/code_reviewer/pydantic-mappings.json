@@ -1,0 +1,28 @@
+{
+  "enabled": true,
+  "operation_name_mapping": {
+    "enabled": true,
+    "prefixes": {
+      "invoke_agent": "invoke_agent",
+      "agent run": "invoke_agent",
+      "execute_tool": "execute_tool",
+      "running tool": "execute_tool"
+    }
+  },
+  "attribute_renaming": {
+    "enabled": true,
+    "mappings": {
+      "tool_response": "gen_ai.tool.call.result",
+      "tool_arguments": "gen_ai.tool.call.arguments",
+      "agent_name": "gen_ai.agent.name"
+    }
+  },
+  "message_unpacking": {
+    "enabled": true,
+    "source_attribute": "all_messages_json",
+    "input_attribute": "gen_ai.input.messages",
+    "output_attribute": "gen_ai.output.messages",
+    "input_roles": ["user"],
+    "output_roles": ["assistant"]
+  }
+}

@@ -1,0 +1,7 @@
+#!/bin/bash
+
+DEFAULT_URL="https://github.com/krimple/pydantic-code-reviewer"
+REPO_URL="${1:-$DEFAULT_URL}"
+
+source .venv/bin/activate
+python src/code_reviewer/main.py "$REPO_URL"

@@ -71,12 +71,21 @@ Required environment variables:
 
 ## Usage
 
+The simplest way to run the reviewer is with the `./run` script, which activates the virtual environment automatically:
+
 ```bash
 # Review a repository
-code-reviewer https://github.com/user/repo
+./run https://github.com/user/repo
 
-# Review a specific branch
-code-reviewer https://github.com/user/repo develop
+# Uses a default demo repo if no URL is provided
+./run
+```
+
+You can also run it directly:
+
+```bash
+source .venv/bin/activate
+python src/code_reviewer/main.py https://github.com/user/repo
 ```
 
 Output is a JSON `FinalReport` containing security, complexity, and documentation review results with severity-rated findings.
