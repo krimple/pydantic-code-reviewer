@@ -7,8 +7,6 @@ import logging
 import os
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 from opentelemetry import trace
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.context import Context
@@ -20,6 +18,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from pydantic_ai import Agent
+
+logger = logging.getLogger(__name__)
 
 
 # GenAI Semantic Convention attribute keys (v1.40.0)
