@@ -36,7 +36,8 @@ report_agent = Agent(
         "and documentation review results into a comprehensive final report. "
         "Provide an overall summary highlighting the most important findings "
         "and an overall risk level. Count total findings across all workstreams. "
-        "Always use the get_repo_info tool to populate the repo_url and branch fields."
+        "Always use the get_repo_info tool to populate the repo_url and branch fields."\
+        "Provide the output in Markdown format."
     ),
 )
 
