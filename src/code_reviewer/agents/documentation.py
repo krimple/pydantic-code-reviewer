@@ -2,25 +2,39 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic_ai import Agent, RunContext
 
 from code_reviewer.config import DEFAULT_MODEL
+from code_reviewer.agent_context import current_agent_id, current_agent_name
+from code_reviewer.languages import get_source_files
 from code_reviewer.models.review import DocumentationReviewResult
 from code_reviewer.telemetry import get_tracer
 
+logger = logging.getLogger(__name__)
 tracer = get_tracer("code-reviewer.documentation")
+
+# Patterns to extract from source code per language
+STRUCTURE_PATTERNS: dict[str, tuple[str, ...]] = {
+    "python": ("class ", "def ", "async def "),
+    "javascript": ("class ", "function ", "export ", "export default ", "module.exports"),
+    "go": ("func ", "type ", "package "),
+}
 
 
 @dataclass
 class DocsDeps:
     """Dependencies for the documentation review agent."""
+
     repo_path: Path
+    languages: list[str]
 
 
 documentation_agent = Agent(
+    name="documentation_agent",
     deps_type=DocsDeps,
     output_type=DocumentationReviewResult,
     instructions=(
@@ -80,36 +94,46 @@ async def read_documentation(ctx: RunContext[DocsDeps]) -> str:
 async def read_source_structure(ctx: RunContext[DocsDeps]) -> str:
     """Read source code structure to compare against documentation."""
     with tracer.start_as_current_span("read_source_structure"):
-        py_files = sorted(ctx.deps.repo_path.rglob("*.py"))[:30]
+        files = get_source_files(ctx.deps.repo_path, ctx.deps.languages, limit=30)
         structure = []
-        for f in py_files:
+
+        # Build combined patterns for all detected languages
+        patterns: tuple[str, ...] = ()
+        for lang in ctx.deps.languages:
+            patterns = patterns + STRUCTURE_PATTERNS.get(lang, ())
+
+        for f in files:
             rel = f.relative_to(ctx.deps.repo_path)
             try:
                 text = f.read_text(errors="ignore")
-                # Extract just class/function definitions
                 lines = [
                     line.strip()
                     for line in text.splitlines()
-                    if line.strip().startswith(("class ", "def ", "async def "))
-                ]
+                    if line.strip().startswith(patterns)
+                ] if patterns else []
                 structure.append(f"{rel}: {', '.join(lines[:10])}")
             except Exception:
                 structure.append(str(rel))
-        return "\n".join(structure) if structure else "No Python source files found."
+        return "\n".join(structure) if structure else "No source files found."
 
 
-async def run_documentation_review(repo_path: Path) -> DocumentationReviewResult:
+async def run_documentation_review(repo_path: Path, languages: list[str]) -> DocumentationReviewResult:
     """Execute the documentation review agent."""
     with tracer.start_as_current_span(
         "documentation_review",
-        attributes={"repo.path": str(repo_path)},
+        attributes={"repo.path": str(repo_path), "repo.languages": ",".join(languages)},
     ):
-        deps = DocsDeps(repo_path=repo_path)
+        logger.info("Starting documentation review agent for languages: %s", ", ".join(languages))
+        current_agent_id.set("documentation_agent")
+        current_agent_name.set("documentation_agent")
+        deps = DocsDeps(repo_path=repo_path, languages=languages)
+        lang_list = ", ".join(languages)
         result = await documentation_agent.run(
-            "Review this repository's documentation. "
+            f"Review this {lang_list} repository's documentation. "
             "Find all doc files, read their content, and compare against "
             "the source code structure to assess completeness and relevance.",
             deps=deps,
             model=DEFAULT_MODEL,
         )
+        logger.info("Documentation review agent complete")
         return result.output

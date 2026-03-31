@@ -131,13 +131,12 @@ class TestPydanticTelemetryNormalizerProcessor:
 
     # --- message unpacking ---
 
-    def test_unpacks_messages_by_role(self):
+    def test_unpacks_simple_role_based_messages(self):
+        """Backward compat: messages with a top-level 'role' key are passed through."""
         packed = json.dumps([
-            {"role": "user", "parts": [{"type": "text", "content": "hello"}]},
-            {"role": "assistant", "parts": [{"type": "text", "content": "hi"}],
-             "finish_reason": "stop"},
-            {"role": "user", "parts": [{"type": "tool_call_response", "id": "t1",
-                                        "name": "foo", "result": "bar"}]},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+            {"role": "system", "content": "be helpful"},
         ])
         provider, exporter = _make_provider_and_exporter()
         tracer = provider.get_tracer("test")
@@ -150,10 +149,69 @@ class TestPydanticTelemetryNormalizerProcessor:
         input_msgs = json.loads(attrs["gen_ai.input.messages"])
         output_msgs = json.loads(attrs["gen_ai.output.messages"])
         assert len(input_msgs) == 2
-        assert all(m["role"] == "user" for m in input_msgs)
+        assert {m["role"] for m in input_msgs} == {"user", "system"}
         assert len(output_msgs) == 1
         assert output_msgs[0]["role"] == "assistant"
-        # source attribute removed
+        assert attrs.get("all_messages_json") is None
+        provider.shutdown()
+
+    def test_unpacks_pydantic_ai_native_messages(self):
+        """Pydantic AI format: kind/parts/part_kind are normalized to role/content."""
+        packed = json.dumps([
+            {
+                "kind": "request",
+                "parts": [
+                    {"part_kind": "system-prompt", "content": "You are a reviewer."},
+                    {"part_kind": "user-prompt", "content": "Review this code."},
+                ],
+            },
+            {
+                "kind": "response",
+                "parts": [
+                    {"part_kind": "tool-call", "tool_name": "get_info",
+                     "args": {"x": 1}, "tool_call_id": "t1"},
+                ],
+            },
+            {
+                "kind": "request",
+                "parts": [
+                    {"part_kind": "tool-return", "tool_name": "get_info",
+                     "content": "info here", "tool_call_id": "t1"},
+                ],
+            },
+            {
+                "kind": "response",
+                "parts": [
+                    {"part_kind": "text", "content": "Here is the final review."},
+                ],
+            },
+        ])
+        provider, exporter = _make_provider_and_exporter()
+        tracer = provider.get_tracer("test")
+        with tracer.start_as_current_span("agent run report") as span:
+            span.set_attribute("gen_ai.system", "anthropic")
+            span.set_attribute("all_messages_json", packed)
+        spans = exporter.get_finished_spans()
+        attrs = spans[0].attributes
+
+        input_msgs = json.loads(attrs["gen_ai.input.messages"])
+        output_msgs = json.loads(attrs["gen_ai.output.messages"])
+
+        # input: system-prompt, user-prompt, tool-return
+        assert len(input_msgs) == 3
+        assert input_msgs[0]["role"] == "system"
+        assert input_msgs[0]["content"] == "You are a reviewer."
+        assert input_msgs[1]["role"] == "user"
+        assert input_msgs[2]["role"] == "tool"
+        assert input_msgs[2]["tool_name"] == "get_info"
+
+        # output: tool-call, text
+        assert len(output_msgs) == 2
+        assert output_msgs[0]["role"] == "assistant"
+        assert output_msgs[0]["tool_name"] == "get_info"
+        assert output_msgs[1]["role"] == "assistant"
+        assert output_msgs[1]["content"] == "Here is the final review."
+
         assert attrs.get("all_messages_json") is None
         provider.shutdown()
 
@@ -225,7 +283,7 @@ class TestPydanticTelemetryNormalizerProcessor:
         provider.shutdown()
 
     def test_disable_message_unpacking_only(self):
-        packed = json.dumps([{"role": "user", "parts": []}])
+        packed = json.dumps([{"role": "user", "content": "hi"}])
         config = {
             "enabled": True,
             "message_unpacking": {"enabled": False},

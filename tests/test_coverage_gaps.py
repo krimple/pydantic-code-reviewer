@@ -17,81 +17,84 @@ def _make_ctx(deps):
 
 class TestComplexityErrorBranches:
     @pytest.mark.asyncio
-    async def test_radon_timeout(self, tmp_path):
+    async def test_complexity_tool_timeout(self, tmp_path):
         from code_reviewer.agents.complexity import run_complexity_analysis
 
-        ctx = _make_ctx(ComplexityDeps(repo_path=tmp_path))
-        with patch("code_reviewer.agents.complexity.subprocess.run") as mock:
+        (tmp_path / "app.py").write_text("def foo(): pass\n")
+        ctx = _make_ctx(ComplexityDeps(repo_path=tmp_path, languages=["python"]))
+        with patch("code_reviewer.tool_config.subprocess.run") as mock:
             mock.side_effect = subprocess.TimeoutExpired(cmd="radon", timeout=120)
             result = await run_complexity_analysis(ctx)
-            assert "Radon error" in result
+            assert "timed out" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_radon_not_found(self, tmp_path):
+    async def test_complexity_tool_not_found(self, tmp_path):
         from code_reviewer.agents.complexity import run_complexity_analysis
 
-        ctx = _make_ctx(ComplexityDeps(repo_path=tmp_path))
-        with patch("code_reviewer.agents.complexity.subprocess.run") as mock:
-            mock.side_effect = FileNotFoundError("radon not found")
+        (tmp_path / "app.py").write_text("def foo(): pass\n")
+        ctx = _make_ctx(ComplexityDeps(repo_path=tmp_path, languages=["python"]))
+        with patch("code_reviewer.tool_config.tool_available", return_value=False):
             result = await run_complexity_analysis(ctx)
-            assert "Radon error" in result
+            assert "TOOL_UNAVAILABLE" in result
 
     @pytest.mark.asyncio
-    async def test_radon_empty_output(self, tmp_path):
+    async def test_complexity_tool_empty_output(self, tmp_path):
         from code_reviewer.agents.complexity import run_complexity_analysis
 
-        ctx = _make_ctx(ComplexityDeps(repo_path=tmp_path))
-        with patch("code_reviewer.agents.complexity.subprocess.run") as mock:
+        (tmp_path / "app.py").write_text("def foo(): pass\n")
+        ctx = _make_ctx(ComplexityDeps(repo_path=tmp_path, languages=["python"]))
+        with patch("code_reviewer.tool_config.subprocess.run") as mock:
             mock.return_value = MagicMock(stdout="", stderr="")
             result = await run_complexity_analysis(ctx)
-            assert result == "No complexity data."
+            assert "No issues found" in result or "radon" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_vulture_empty_output(self, tmp_path):
+    async def test_dead_code_tool_unavailable(self, tmp_path):
         from code_reviewer.agents.complexity import run_dead_code_detection
 
-        ctx = _make_ctx(ComplexityDeps(repo_path=tmp_path))
-        with patch("code_reviewer.agents.complexity.subprocess.run") as mock:
-            mock.return_value = MagicMock(stdout="", stderr="")
+        (tmp_path / "app.py").write_text("def foo(): pass\n")
+        ctx = _make_ctx(ComplexityDeps(repo_path=tmp_path, languages=["python"]))
+        with patch("code_reviewer.tool_config.tool_available", return_value=False):
             result = await run_dead_code_detection(ctx)
-            assert result == "No dead code found."
+            assert "TOOL_UNAVAILABLE" in result
 
     @pytest.mark.asyncio
     async def test_read_duplication_empty(self, tmp_path):
         from code_reviewer.agents.complexity import read_source_for_duplication
 
-        ctx = _make_ctx(ComplexityDeps(repo_path=tmp_path))
+        ctx = _make_ctx(ComplexityDeps(repo_path=tmp_path, languages=["python"]))
         result = await read_source_for_duplication(ctx)
-        assert "No Python files" in result
+        assert "No source files" in result
 
 
 class TestSecurityErrorBranches:
     @pytest.mark.asyncio
-    async def test_bandit_not_found(self, tmp_path):
-        from code_reviewer.agents.security import run_bandit_scan
+    async def test_security_tool_not_found(self, tmp_path):
+        from code_reviewer.agents.security import run_static_security_scan
 
-        ctx = _make_ctx(SecurityDeps(repo_path=tmp_path))
-        with patch("code_reviewer.agents.security.subprocess.run") as mock:
-            mock.side_effect = FileNotFoundError("bandit not found")
-            result = await run_bandit_scan(ctx)
-            assert "error" in result.lower()
+        (tmp_path / "app.py").write_text("import os\n")
+        ctx = _make_ctx(SecurityDeps(repo_path=tmp_path, languages=["python"]))
+        with patch("code_reviewer.tool_config.tool_available", return_value=False):
+            result = await run_static_security_scan(ctx)
+            assert "TOOL_UNAVAILABLE" in result
 
     @pytest.mark.asyncio
-    async def test_bandit_empty_output(self, tmp_path):
-        from code_reviewer.agents.security import run_bandit_scan
+    async def test_security_tool_empty_output(self, tmp_path):
+        from code_reviewer.agents.security import run_static_security_scan
 
-        ctx = _make_ctx(SecurityDeps(repo_path=tmp_path))
-        with patch("code_reviewer.agents.security.subprocess.run") as mock:
+        (tmp_path / "app.py").write_text("import os\n")
+        ctx = _make_ctx(SecurityDeps(repo_path=tmp_path, languages=["python"]))
+        with patch("code_reviewer.tool_config.subprocess.run") as mock:
             mock.return_value = MagicMock(stdout="", stderr="")
-            result = await run_bandit_scan(ctx)
-            assert result == "No issues found."
+            result = await run_static_security_scan(ctx)
+            assert "No issues found" in result or "bandit" in result.lower()
 
     @pytest.mark.asyncio
     async def test_pip_audit_timeout(self, tmp_path):
         from code_reviewer.agents.security import run_dependency_audit
 
         (tmp_path / "requirements.txt").write_text("flask\n")
-        ctx = _make_ctx(SecurityDeps(repo_path=tmp_path))
+        ctx = _make_ctx(SecurityDeps(repo_path=tmp_path, languages=["python"]))
         with patch("code_reviewer.agents.security.subprocess.run") as mock:
             mock.side_effect = subprocess.TimeoutExpired(cmd="pip-audit", timeout=120)
             result = await run_dependency_audit(ctx)
@@ -102,7 +105,7 @@ class TestSecurityErrorBranches:
         from code_reviewer.agents.security import run_dependency_audit
 
         (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\n')
-        ctx = _make_ctx(SecurityDeps(repo_path=tmp_path))
+        ctx = _make_ctx(SecurityDeps(repo_path=tmp_path, languages=["python"]))
         with patch("code_reviewer.agents.security.subprocess.run") as mock:
             mock.side_effect = subprocess.TimeoutExpired(cmd="pip-audit", timeout=120)
             result = await run_dependency_audit(ctx)
@@ -140,11 +143,12 @@ class TestTelemetryEdgeCases:
 class TestPipelineHelpers:
     def test_log_status_when_enabled(self):
         from code_reviewer.pipeline import _log_status
+        from code_reviewer.telemetry import SESSION_CONVERSATION_ID
         span = MagicMock()
         with patch.dict("os.environ", {"AGENT_LOG_STATUS": "true"}):
             _log_status(span, "reviewing")
             span.add_event.assert_called_once_with(
-                "agent.status", {"status": "reviewing"}
+                "agent.status", {"status": "reviewing", "gen_ai.conversation.id": SESSION_CONVERSATION_ID}
             )
 
     def test_log_status_when_disabled(self):

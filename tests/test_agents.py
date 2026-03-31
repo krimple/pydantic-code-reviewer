@@ -17,8 +17,9 @@ class TestSecurityAgent:
         assert security_agent is not None
 
     def test_security_deps(self, tmp_path):
-        deps = SecurityDeps(repo_path=tmp_path)
+        deps = SecurityDeps(repo_path=tmp_path, languages=["python"])
         assert deps.repo_path == tmp_path
+        assert deps.languages == ["python"]
 
 
 class TestComplexityAgent:
@@ -26,8 +27,9 @@ class TestComplexityAgent:
         assert complexity_agent is not None
 
     def test_complexity_deps(self, tmp_path):
-        deps = ComplexityDeps(repo_path=tmp_path)
+        deps = ComplexityDeps(repo_path=tmp_path, languages=["python"])
         assert deps.repo_path == tmp_path
+        assert deps.languages == ["python"]
 
 
 class TestDocumentationAgent:
@@ -35,8 +37,9 @@ class TestDocumentationAgent:
         assert documentation_agent is not None
 
     def test_docs_deps(self, tmp_path):
-        deps = DocsDeps(repo_path=tmp_path)
+        deps = DocsDeps(repo_path=tmp_path, languages=["python"])
         assert deps.repo_path == tmp_path
+        assert deps.languages == ["python"]
 
 
 class TestReportAgent:
@@ -50,5 +53,7 @@ class TestReportAgent:
             security=SecurityReviewResult(summary="OK"),
             complexity=ComplexityReviewResult(summary="OK"),
             documentation=DocumentationReviewResult(summary="OK"),
+            languages=["python"],
         )
         assert deps.repo_url == "https://github.com/user/repo"
+        assert deps.languages == ["python"]

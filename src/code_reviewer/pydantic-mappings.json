@@ -22,7 +22,15 @@
     "source_attribute": "all_messages_json",
     "input_attribute": "gen_ai.input.messages",
     "output_attribute": "gen_ai.output.messages",
-    "input_roles": ["user"],
-    "output_roles": ["assistant"]
+    "input_roles": ["system", "user", "tool"],
+    "output_roles": ["assistant"],
+    "part_kind_to_role": {
+      "system-prompt": "system",
+      "user-prompt": "user",
+      "tool-return": "tool",
+      "retry-prompt": "user",
+      "text": "assistant",
+      "tool-call": "assistant"
+    }
   }
 }

@@ -18,7 +18,7 @@ from code_reviewer.pipeline import run_review_pipeline
 class TestReviewPipeline:
     @pytest.mark.asyncio
     async def test_pipeline_runs_all_workstreams(self, tmp_path):
-        """Test that the pipeline clones, runs all reviews, and generates a report."""
+        """Test that the pipeline clones, detects languages, runs all reviews, and generates a report."""
         mock_security = SecurityReviewResult(summary="No security issues")
         mock_complexity = ComplexityReviewResult(summary="Low complexity")
         mock_docs = DocumentationReviewResult(
@@ -38,6 +38,7 @@ class TestReviewPipeline:
         with (
             patch("code_reviewer.pipeline.clone_repo", return_value=tmp_path),
             patch("code_reviewer.pipeline.cleanup_repo") as mock_cleanup,
+            patch("code_reviewer.pipeline.detect_languages", return_value=["python"]),
             patch(
                 "code_reviewer.pipeline.run_security_review",
                 new_callable=AsyncMock,
@@ -73,6 +74,7 @@ class TestReviewPipeline:
         with (
             patch("code_reviewer.pipeline.clone_repo", return_value=tmp_path),
             patch("code_reviewer.pipeline.cleanup_repo") as mock_cleanup,
+            patch("code_reviewer.pipeline.detect_languages", return_value=["python"]),
             patch(
                 "code_reviewer.pipeline.run_security_review",
                 new_callable=AsyncMock,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,24 +10,36 @@ from pathlib import Path
 from pydantic_ai import Agent, RunContext
 
 from code_reviewer.config import DEFAULT_MODEL
+from code_reviewer.agent_context import current_agent_id, current_agent_name
+from code_reviewer.languages import get_source_files
 from code_reviewer.models.review import SecurityReviewResult
 from code_reviewer.telemetry import get_tracer
+from code_reviewer.tool_config import (
+    SECURITY_TOOLS,
+    run_tools_for_languages,
+)
 
+logger = logging.getLogger(__name__)
 tracer = get_tracer("code-reviewer.security")
 
 
 @dataclass
 class SecurityDeps:
     """Dependencies for the security review agent."""
+
     repo_path: Path
+    languages: list[str]
 
 
 security_agent = Agent(
+    name="security_agent",
     deps_type=SecurityDeps,
     output_type=SecurityReviewResult,
     instructions=(
-        "You are a security reviewer. Analyze the tool outputs from bandit "
-        "(static security analysis) and pip-audit (dependency vulnerability check). "
+        "You are a security reviewer. Analyze the tool outputs from static security "
+        "analysis and dependency vulnerability checks for all detected languages. "
+        "If any tool output is prefixed with [TOOL_UNAVAILABLE], perform that analysis "
+        "yourself using the provided source code. "
         "Summarize findings into a structured SecurityReviewResult. "
         "Rate severity accurately: CRITICAL for RCE/injection, HIGH for auth issues, "
         "MEDIUM for information disclosure, LOW for best-practice violations."
@@ -35,94 +48,178 @@ security_agent = Agent(
 
 
 @security_agent.tool
-async def run_bandit_scan(ctx: RunContext[SecurityDeps]) -> str:
-    """Run bandit static security analysis on the repository."""
-    with tracer.start_as_current_span(
-        "run_bandit",
-        attributes={"repo.path": str(ctx.deps.repo_path)},
-    ):
-        try:
-            result = subprocess.run(
-                ["bandit", "-r", str(ctx.deps.repo_path), "-f", "json", "-q"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            return result.stdout or result.stderr or "No issues found."
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            return f"Bandit scan error: {e}"
+async def run_static_security_scan(ctx: RunContext[SecurityDeps]) -> str:
+    """Run static security analysis tools for all detected languages."""
+    source_content = _read_source_preview(ctx.deps.repo_path, ctx.deps.languages)
+    return await run_tools_for_languages(
+        SECURITY_TOOLS,
+        ctx.deps.languages,
+        ctx.deps.repo_path,
+        fallback_context=source_content,
+    )
 
 
 @security_agent.tool
 async def run_dependency_audit(ctx: RunContext[SecurityDeps]) -> str:
     """Check for known vulnerabilities in project dependencies."""
     with tracer.start_as_current_span(
-        "run_pip_audit",
+        "run_dependency_audit",
         attributes={"repo.path": str(ctx.deps.repo_path)},
     ):
-        req_files = list(ctx.deps.repo_path.glob("**/requirements*.txt"))
-        pyproject = ctx.deps.repo_path / "pyproject.toml"
+        results: list[str] = []
 
-        if not req_files and not pyproject.exists():
-            return "No requirements files or pyproject.toml found."
+        # Python: pip-audit with requirements files
+        if "python" in ctx.deps.languages:
+            results.append(await _run_python_dependency_audit(ctx.deps.repo_path))
 
-        results = []
-        for req_file in req_files:
-            try:
-                result = subprocess.run(
-                    ["pip-audit", "-r", str(req_file), "-f", "json"],
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-                results.append(result.stdout or result.stderr)
-            except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-                results.append(f"pip-audit error for {req_file.name}: {e}")
+        # JavaScript: npm audit
+        if "javascript" in ctx.deps.languages:
+            results.append(await _run_js_dependency_audit(ctx.deps.repo_path))
 
-        if pyproject.exists() and not req_files:
-            try:
-                result = subprocess.run(
-                    ["pip-audit", "-f", "json"],
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                    cwd=str(ctx.deps.repo_path),
-                )
-                results.append(result.stdout or result.stderr)
-            except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-                results.append(f"pip-audit error for pyproject.toml: {e}")
+        # Go: govulncheck
+        if "go" in ctx.deps.languages:
+            results.append(await _run_go_dependency_audit(ctx.deps.repo_path))
 
-        return "\n".join(results) if results else "No dependency issues found."
+        return "\n\n".join(results) if results else "No dependency files found for any detected language."
 
 
 @security_agent.tool
 async def read_source_files(ctx: RunContext[SecurityDeps]) -> str:
-    """Read Python source files for manual security review."""
+    """Read source files for manual security review."""
     with tracer.start_as_current_span("read_source_files"):
-        py_files = list(ctx.deps.repo_path.rglob("*.py"))[:20]  # Limit to 20 files
-        contents = []
-        for f in py_files:
-            try:
-                text = f.read_text(errors="ignore")[:5000]  # Limit per file
-                rel = f.relative_to(ctx.deps.repo_path)
-                contents.append(f"--- {rel} ---\n{text}")
-            except Exception:
-                continue
-        return "\n\n".join(contents) if contents else "No Python files found."
+        return _read_source_preview(ctx.deps.repo_path, ctx.deps.languages)
 
 
-async def run_security_review(repo_path: Path) -> SecurityReviewResult:
+async def run_security_review(repo_path: Path, languages: list[str]) -> SecurityReviewResult:
     """Execute the security review agent."""
     with tracer.start_as_current_span(
         "security_review",
-        attributes={"repo.path": str(repo_path)},
+        attributes={"repo.path": str(repo_path), "repo.languages": ",".join(languages)},
     ):
-        deps = SecurityDeps(repo_path=repo_path)
+        logger.info("Starting security review agent for languages: %s", ", ".join(languages))
+        current_agent_id.set("security_agent")
+        current_agent_name.set("security_agent")
+        deps = SecurityDeps(repo_path=repo_path, languages=languages)
+        lang_list = ", ".join(languages)
         result = await security_agent.run(
-            "Analyze this repository for security issues. "
-            "Run the bandit scan and dependency audit tools, "
+            f"Analyze this {lang_list} repository for security issues. "
+            "Run the static security scan and dependency audit tools, "
             "then review the source code for additional concerns.",
             deps=deps,
             model=DEFAULT_MODEL,
         )
+        logger.info("Security review agent complete")
         return result.output
+
+
+# --- Private helpers ---
+
+
+def _read_source_preview(repo_path: Path, languages: list[str]) -> str:
+    """Read a preview of source files for LLM fallback context."""
+    files = get_source_files(repo_path, languages, limit=20)
+    contents: list[str] = []
+    for f in files:
+        try:
+            text = f.read_text(errors="ignore")[:5000]
+            rel = f.relative_to(repo_path)
+            contents.append(f"--- {rel} ---\n{text}")
+        except Exception:
+            continue
+    return "\n\n".join(contents) if contents else "No source files found."
+
+
+async def _run_python_dependency_audit(repo_path: Path) -> str:
+    """Run pip-audit for Python dependencies."""
+    req_files = list(repo_path.glob("**/requirements*.txt"))
+    pyproject = repo_path / "pyproject.toml"
+
+    if not req_files and not pyproject.exists():
+        return "Python: No requirements files or pyproject.toml found."
+
+    results: list[str] = []
+    for req_file in req_files:
+        try:
+            result = subprocess.run(
+                ["pip-audit", "-r", str(req_file), "-f", "json"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            results.append(f"pip-audit ({req_file.name}): {result.stdout or result.stderr}")
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            results.append(f"pip-audit error for {req_file.name}: {e}")
+
+    if pyproject.exists() and not req_files:
+        try:
+            result = subprocess.run(
+                ["pip-audit", "-f", "json"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                cwd=str(repo_path),
+            )
+            results.append(f"pip-audit (pyproject.toml): {result.stdout or result.stderr}")
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            results.append(f"pip-audit error for pyproject.toml: {e}")
+
+    return "\n".join(results)
+
+
+async def _run_js_dependency_audit(repo_path: Path) -> str:
+    """Run npm audit for JavaScript dependencies."""
+    package_lock = repo_path / "package-lock.json"
+    package_json = repo_path / "package.json"
+
+    if not package_json.exists():
+        return "JavaScript: No package.json found."
+
+    if not package_lock.exists():
+        # npm audit needs a lockfile; provide package.json for LLM analysis
+        try:
+            text = package_json.read_text(errors="ignore")[:8000]
+            return (
+                "[TOOL_UNAVAILABLE: npm audit] No package-lock.json found. "
+                f"Please analyze dependencies from package.json:\n\n{text}"
+            )
+        except Exception:
+            return "JavaScript: Could not read package.json."
+
+    try:
+        result = subprocess.run(
+            ["npm", "audit", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(repo_path),
+        )
+        return f"npm audit: {result.stdout or result.stderr}"
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return f"npm audit error: {e}"
+
+
+async def _run_go_dependency_audit(repo_path: Path) -> str:
+    """Run govulncheck for Go dependencies."""
+    go_mod = repo_path / "go.mod"
+
+    if not go_mod.exists():
+        return "Go: No go.mod found."
+
+    try:
+        result = subprocess.run(
+            ["govulncheck", "./..."],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(repo_path),
+        )
+        return f"govulncheck: {result.stdout or result.stderr}"
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        try:
+            text = go_mod.read_text(errors="ignore")[:8000]
+            return (
+                f"[TOOL_UNAVAILABLE: govulncheck] govulncheck error: {e}. "
+                f"Please analyze dependencies from go.mod:\n\n{text}"
+            )
+        except Exception:
+            return f"govulncheck error: {e}"
