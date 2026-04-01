@@ -1,0 +1,71 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  otlp:
+    endpoint: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
+    headers:
+      "x-honeycomb-team": "${HONEYCOMB_API_KEY}"
+  debug:
+    verbosity: detailed
+  awss3/traces:
+    s3uploader:
+      region: "${AWS_BUCKET_REGION}"
+      s3_bucket: "${BUCKET_NAME}"
+      s3_prefix: "${BUCKET_DIRECTORY_PREFIX}"
+      s3_partition_format: "year=%Y/month=%m/day=%d/hour=%H/minute=%M"
+      s3_partition_timezone: "Europe/London"
+      compression: gzip
+    marshaler: otlp_json
+    timeout: 30s
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+  awss3/metrics:
+    s3uploader:
+      region: "${AWS_BUCKET_REGION}"
+      s3_bucket: "${BUCKET_NAME}"
+      s3_prefix: "${BUCKET_DIRECTORY_PREFIX}"
+      s3_partition_format: "year=%Y/month=%m/day=%d/hour=%H/minute=%M"
+      compression: gzip
+    marshaler: otlp_json
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+  awss3/logs:
+    s3uploader:
+      region: "${AWS_BUCKET_REGION}"
+      s3_bucket: "${BUCKET_NAME}"
+      s3_prefix: "${BUCKET_DIRECTORY_PREFIX}"
+      s3_partition_format: "year=%Y/month=%m/day=%d/hour=%H/minute=%M"
+      compression: gzip
+    marshaler: otlp_json
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+
+service:
+  telemetry:
+    logs:
+      level: debug
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, otlp, awss3/traces]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, otlp, awss3/logs]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, otlp, awss3/metrics]
