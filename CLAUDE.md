@@ -7,5 +7,3 @@ It uses the following APIs:
 - dotenv - to read environment vars from .env files at startup
 - git - to clone projects on GitHub
 - shutil - to run shell scripts
--
-

@@ -17,7 +17,9 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from pydantic_ai import Agent
 
-from code_reviewer.normalizer import PydanticTelemetryNormalizerProcessor  # noqa: F401 — re-exported
+from code_reviewer.normalizer import (
+    PydanticTelemetryNormalizerProcessor,
+)  # noqa: F401 — re-exported
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,6 @@ GEN_AI_RESPONSE_FINISH_REASONS = "gen_ai.response.finish_reasons"
 
 # Session-wide conversation ID — generated once per process.
 SESSION_CONVERSATION_ID = str(uuid.uuid4())
-
 
 
 def _is_truthy(val: str | None) -> bool:
@@ -65,18 +66,22 @@ def setup_telemetry() -> TracerProvider:
     - OTEL_LOG_USER_PROMPTS: Log user prompts as span events
     """
     if not _is_truthy(os.getenv("CLAUDE_CODE_ENABLE_TELEMETRY", "true")):
-        logger.debug("Telemetry disabled via CLAUDE_CODE_ENABLE_TELEMETRY, returning no-op provider")
+        logger.debug(
+            "Telemetry disabled via CLAUDE_CODE_ENABLE_TELEMETRY, returning no-op provider"
+        )
         provider = TracerProvider()
         trace.set_tracer_provider(provider)
         return provider
 
     service_name = os.getenv("OTEL_SERVICE_NAME", "code-reviewer")
     honeycomb_api_key = os.getenv("HONEYCOMB_API_KEY", "")
-    endpoint = os.getenv(
-        "OTEL_EXPORTER_OTLP_ENDPOINT", "https://api.honeycomb.io"
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://api.honeycomb.io")
+    logger.debug(
+        "Telemetry config: service=%s, endpoint=%s, api_key=%s",
+        service_name,
+        endpoint,
+        "set" if honeycomb_api_key else "NOT SET",
     )
-    logger.debug("Telemetry config: service=%s, endpoint=%s, api_key=%s",
-                 service_name, endpoint, "set" if honeycomb_api_key else "NOT SET")
 
     # Ensure the endpoint has a scheme — the parent shell (e.g. Claude Code)
     # may set OTEL_EXPORTER_OTLP_ENDPOINT without https://.
@@ -93,8 +98,13 @@ def setup_telemetry() -> TracerProvider:
 
     # Add the GenAI operation name processor so agent/tool spans
     # get the required gen_ai.operation.name attribute.
-    logger.debug("Adding PydanticTelemetryNormalizerProcessor (conversation_id=%s)", SESSION_CONVERSATION_ID)
-    provider.add_span_processor(PydanticTelemetryNormalizerProcessor(conversation_id=SESSION_CONVERSATION_ID))
+    logger.debug(
+        "Adding PydanticTelemetryNormalizerProcessor (conversation_id=%s)",
+        SESSION_CONVERSATION_ID,
+    )
+    provider.add_span_processor(
+        PydanticTelemetryNormalizerProcessor(conversation_id=SESSION_CONVERSATION_ID)
+    )
 
     if honeycomb_api_key:
         logger.debug("Configuring OTLP exporter -> %s/v1/traces", endpoint)
@@ -129,7 +139,9 @@ def setup_telemetry() -> TracerProvider:
     # Also send logs to the console so operators can follow progress.
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
-    console_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s — %(message)s"))
+    console_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-8s %(name)s — %(message)s")
+    )
     root_logger.addHandler(console_handler)
     root_logger.setLevel(logging.DEBUG)
 
@@ -140,14 +152,18 @@ def setup_telemetry() -> TracerProvider:
     # the parent shell (e.g. Claude Code sets api.honeycomb.io:443).
     if honeycomb_api_key:
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
-        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"x-honeycomb-team={honeycomb_api_key}"
+        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = (
+            f"x-honeycomb-team={honeycomb_api_key}"
+        )
 
     trace.set_tracer_provider(provider)
 
     logger.info("Instrumenting all pydantic-ai agents")
     Agent.instrument_all()
 
-    logger.info("Telemetry setup complete (service=%s, endpoint=%s)", service_name, endpoint)
+    logger.info(
+        "Telemetry setup complete (service=%s, endpoint=%s)", service_name, endpoint
+    )
     return provider
 
 
