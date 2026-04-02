@@ -10,20 +10,12 @@ from pydantic_ai import Agent, RunContext
 
 from code_reviewer.config import DEFAULT_MODEL
 from code_reviewer.agent_context import current_agent_id, current_agent_name
-from code_reviewer.languages import get_source_files
+from code_reviewer.languages import get_source_summary, read_file_content
 from code_reviewer.models.review import DocumentationReviewResult
 from code_reviewer.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer("code-reviewer.documentation")
-
-# Patterns to extract from source code per language
-STRUCTURE_PATTERNS: dict[str, tuple[str, ...]] = {
-    "python": ("class ", "def ", "async def "),
-    "javascript": ("class ", "function ", "export ", "export default ", "module.exports"),
-    "go": ("func ", "type ", "package "),
-}
-
 
 @dataclass
 class DocsDeps:
@@ -78,11 +70,11 @@ async def read_documentation(ctx: RunContext[DocsDeps]) -> str:
             if f.is_file() and f.suffix in doc_extensions:
                 doc_files.append(f)
 
-        doc_files = doc_files[:15]  # Limit
+        doc_files = doc_files[:10]  # Limit
         contents = []
         for f in doc_files:
             try:
-                text = f.read_text(errors="ignore")[:8000]
+                text = f.read_text(errors="ignore")[:4000]
                 rel = f.relative_to(ctx.deps.repo_path)
                 contents.append(f"--- {rel} ---\n{text}")
             except Exception:
@@ -92,29 +84,17 @@ async def read_documentation(ctx: RunContext[DocsDeps]) -> str:
 
 @documentation_agent.tool
 async def read_source_structure(ctx: RunContext[DocsDeps]) -> str:
-    """Read source code structure to compare against documentation."""
+    """Read source code structure (file names and function/class signatures)
+    to compare against documentation."""
     with tracer.start_as_current_span("read_source_structure"):
-        files = get_source_files(ctx.deps.repo_path, ctx.deps.languages, limit=30)
-        structure = []
+        return get_source_summary(ctx.deps.repo_path, ctx.deps.languages)
 
-        # Build combined patterns for all detected languages
-        patterns: tuple[str, ...] = ()
-        for lang in ctx.deps.languages:
-            patterns = patterns + STRUCTURE_PATTERNS.get(lang, ())
 
-        for f in files:
-            rel = f.relative_to(ctx.deps.repo_path)
-            try:
-                text = f.read_text(errors="ignore")
-                lines = [
-                    line.strip()
-                    for line in text.splitlines()
-                    if line.strip().startswith(patterns)
-                ] if patterns else []
-                structure.append(f"{rel}: {', '.join(lines[:10])}")
-            except Exception:
-                structure.append(str(rel))
-        return "\n".join(structure) if structure else "No source files found."
+@documentation_agent.tool
+async def read_specific_file(ctx: RunContext[DocsDeps], file_path: str) -> str:
+    """Read the full content of a specific file for detailed documentation comparison."""
+    with tracer.start_as_current_span("read_specific_file"):
+        return read_file_content(ctx.deps.repo_path, file_path)
 
 
 async def run_documentation_review(repo_path: Path, languages: list[str]) -> DocumentationReviewResult:

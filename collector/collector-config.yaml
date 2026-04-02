@@ -15,7 +15,7 @@ exporters:
     headers:
       "x-honeycomb-team": "${HONEYCOMB_API_KEY}"
   debug:
-    verbosity: detailed
+    verbosity: basic
   awss3/traces:
     s3uploader:
       region: "${AWS_BUCKET_REGION}"
@@ -55,7 +55,7 @@ exporters:
 service:
   telemetry:
     logs:
-      level: debug
+      level: info
   pipelines:
     traces:
       receivers: [otlp]

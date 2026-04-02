@@ -118,9 +118,8 @@ DEAD_CODE_TOOLS: dict[str, list[ToolSpec]] = {
 async def run_tool(
     spec: ToolSpec,
     repo_path: Path,
-    fallback_context: str = "",
 ) -> tuple[str, bool]:
-    """Run a CLI tool, or return fallback context if tool is unavailable.
+    """Run a CLI tool, or return a short fallback message if tool is unavailable.
 
     Returns (output_string, used_native_tool).
     """
@@ -139,7 +138,7 @@ async def run_tool(
             return (
                 f"[TOOL_UNAVAILABLE: {spec.name}] "
                 f"{spec.description} tool is not installed. "
-                f"Please analyze the following code yourself:\n\n{fallback_context}"
+                f"Use the read_source_summary and read_specific_file tools to analyze the code yourself."
             ), False
 
         logger.info("Running tool %s on %s", spec.name, repo_path)
@@ -156,7 +155,11 @@ async def run_tool(
                 cwd=cwd,
             )
             logger.info("Tool %s completed", spec.name)
-            return (result.stdout or result.stderr or f"No issues found by {spec.name}."), True
+            output = result.stdout or result.stderr or f"No issues found by {spec.name}."
+            max_output = 30000  # ~7500 tokens — prevent blowing context window
+            if len(output) > max_output:
+                output = output[:max_output] + f"\n\n... (truncated — {len(output)} chars total, showing first {max_output})"
+            return output, True
         except subprocess.TimeoutExpired:
             logger.warning("Tool %s timed out after %ds", spec.name, spec.timeout)
             return f"{spec.name} timed out after {spec.timeout}s.", True
@@ -166,7 +169,7 @@ async def run_tool(
             return (
                 f"[TOOL_UNAVAILABLE: {spec.name}] "
                 f"Could not execute {spec.name}. "
-                f"Please analyze the following code yourself:\n\n{fallback_context}"
+                f"Use the read_source_summary and read_specific_file tools to analyze the code yourself."
             ), False
 
 
@@ -174,7 +177,6 @@ async def run_tools_for_languages(
     tool_registry: dict[str, list[ToolSpec]],
     languages: list[str],
     repo_path: Path,
-    fallback_context: str = "",
 ) -> str:
     """Run all applicable tools for the detected languages.
 
@@ -186,16 +188,15 @@ async def run_tools_for_languages(
     for lang in languages:
         specs = tool_registry.get(lang, [])
         if not specs:
-            # No tools defined for this language — request LLM analysis
             results.append(
                 f"[TOOL_UNAVAILABLE: {lang}] "
                 f"No native analysis tool configured for {lang}. "
-                f"Please analyze the following code yourself:\n\n{fallback_context}"
+                f"Use the read_source_summary and read_specific_file tools to analyze the code yourself."
             )
             continue
 
         for spec in specs:
-            output, _native = await run_tool(spec, repo_path, fallback_context)
+            output, _native = await run_tool(spec, repo_path)
             results.append(f"=== {spec.name} ({lang}) ===\n{output}")
 
     return "\n\n".join(results) if results else "No analysis tools available."

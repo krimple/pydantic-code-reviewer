@@ -43,7 +43,7 @@ _DEFAULT_NORMALIZER_CONFIG: dict = {
     },
     "message_unpacking": {
         "enabled": True,
-        "source_attribute": "all_messages_json",
+        "source_attribute": "pydantic_ai.all_messages",
         "input_attribute": "gen_ai.input.messages",
         "output_attribute": "gen_ai.output.messages",
         "input_roles": ["system", "user", "tool"],
@@ -155,6 +155,7 @@ class PydanticTelemetryNormalizerProcessor(SpanProcessor):
             self._rename_attributes(attrs)
             self._backfill_agent_name(attrs)
             self._unpack_messages(attrs)
+            self._drop_final_result(attrs)
         except TypeError:
             logger.debug("on_end: span '%s' attributes are frozen, skipping mutations", span.name)
 
@@ -193,7 +194,12 @@ class PydanticTelemetryNormalizerProcessor(SpanProcessor):
             return
         if not isinstance(messages, list):
             return
-        normalized = self._normalize_messages(messages)
+        # If messages are already in OTel format (role/parts), use them directly;
+        # otherwise normalize from pydantic_ai native format (kind/parts with part_kind).
+        if messages and "role" in messages[0] and "parts" in messages[0]:
+            normalized = messages
+        else:
+            normalized = self._normalize_messages(messages)
         input_msgs = [m for m in normalized if m.get("role") in self._msg_input_roles]
         output_msgs = [m for m in normalized if m.get("role") in self._msg_output_roles]
         if input_msgs:
@@ -201,6 +207,17 @@ class PydanticTelemetryNormalizerProcessor(SpanProcessor):
         if output_msgs:
             attrs[self._msg_output_attr] = json.dumps(output_msgs)
         del attrs[self._msg_source]
+
+    def _drop_final_result(self, attrs) -> None:
+        """Remove the final_result attribute set by pydantic_ai.
+
+        This attribute contains the raw Pydantic model output, which is not
+        in OTel GenAI format and duplicates information already captured in
+        the conversation messages.
+        """
+        if "final_result" in attrs:
+            logger.debug("Dropping final_result attribute")
+            del attrs["final_result"]
 
     def _normalize_messages(self, messages: list) -> list:
         """Convert pydantic_ai native messages (kind/part_kind) to role/content format.

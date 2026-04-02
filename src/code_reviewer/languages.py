@@ -22,6 +22,12 @@ EXCLUDED_DIRS: set[str] = {
     "__pycache__", ".git", ".venv", "venv", ".tox",
 }
 
+STRUCTURE_PATTERNS: dict[str, tuple[str, ...]] = {
+    "python": ("class ", "def ", "async def "),
+    "javascript": ("class ", "function ", "export ", "export default ", "module.exports"),
+    "go": ("func ", "type ", "package "),
+}
+
 
 def detect_languages(repo_path: Path) -> list[str]:
     """Detect which programming languages are present in a repository.
@@ -74,6 +80,49 @@ def get_source_files(repo_path: Path, languages: list[str], limit: int = 20) -> 
 def tool_available(name: str) -> bool:
     """Check if a CLI tool is available on PATH."""
     return shutil.which(name) is not None
+
+
+def get_source_summary(repo_path: Path, languages: list[str], limit: int = 50) -> str:
+    """Return a lightweight summary: file list with function/class signatures only."""
+    files = get_source_files(repo_path, languages, limit=limit)
+
+    patterns: tuple[str, ...] = ()
+    for lang in languages:
+        patterns = patterns + STRUCTURE_PATTERNS.get(lang, ())
+
+    summary_parts: list[str] = []
+    for f in files:
+        rel = f.relative_to(repo_path)
+        try:
+            text = f.read_text(errors="ignore")
+            lines = text.splitlines()
+            line_count = len(lines)
+            sig_lines = [
+                line.rstrip()
+                for line in lines
+                if line.strip().startswith(patterns)
+            ][:15] if patterns else []
+            sigs = "\n  ".join(sig_lines) if sig_lines else "(no signatures extracted)"
+            summary_parts.append(f"{rel} ({line_count} lines):\n  {sigs}")
+        except Exception:
+            summary_parts.append(f"{rel} (unreadable)")
+
+    return "\n".join(summary_parts) if summary_parts else "No source files found."
+
+
+def read_file_content(repo_path: Path, relative_path: str, max_chars: int = 12000) -> str:
+    """Read a single file's content, capped at max_chars."""
+    target = (repo_path / relative_path).resolve()
+    if not str(target).startswith(str(repo_path.resolve())):
+        return f"Error: path {relative_path} is outside the repository."
+    if not target.is_file():
+        return f"Error: {relative_path} not found."
+    try:
+        text = target.read_text(errors="ignore")[:max_chars]
+        truncated = " (truncated)" if len(text) == max_chars else ""
+        return f"--- {relative_path}{truncated} ---\n{text}"
+    except Exception as e:
+        return f"Error reading {relative_path}: {e}"
 
 
 def _iter_source_files(repo_path: Path):

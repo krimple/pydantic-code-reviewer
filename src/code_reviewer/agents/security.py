@@ -11,7 +11,7 @@ from pydantic_ai import Agent, RunContext
 
 from code_reviewer.config import DEFAULT_MODEL
 from code_reviewer.agent_context import current_agent_id, current_agent_name
-from code_reviewer.languages import get_source_files
+from code_reviewer.languages import get_source_summary, read_file_content
 from code_reviewer.models.review import SecurityReviewResult
 from code_reviewer.telemetry import get_tracer
 from code_reviewer.tool_config import (
@@ -39,7 +39,8 @@ security_agent = Agent(
         "You are a security reviewer. Analyze the tool outputs from static security "
         "analysis and dependency vulnerability checks for all detected languages. "
         "If any tool output is prefixed with [TOOL_UNAVAILABLE], perform that analysis "
-        "yourself using the provided source code. "
+        "yourself by first reviewing the source summary, then using read_specific_file "
+        "to inspect any files that look suspicious. "
         "Summarize findings into a structured SecurityReviewResult. "
         "Rate severity accurately: CRITICAL for RCE/injection, HIGH for auth issues, "
         "MEDIUM for information disclosure, LOW for best-practice violations."
@@ -50,12 +51,10 @@ security_agent = Agent(
 @security_agent.tool
 async def run_static_security_scan(ctx: RunContext[SecurityDeps]) -> str:
     """Run static security analysis tools for all detected languages."""
-    source_content = _read_source_preview(ctx.deps.repo_path, ctx.deps.languages)
     return await run_tools_for_languages(
         SECURITY_TOOLS,
         ctx.deps.languages,
         ctx.deps.repo_path,
-        fallback_context=source_content,
     )
 
 
@@ -84,10 +83,19 @@ async def run_dependency_audit(ctx: RunContext[SecurityDeps]) -> str:
 
 
 @security_agent.tool
-async def read_source_files(ctx: RunContext[SecurityDeps]) -> str:
-    """Read source files for manual security review."""
-    with tracer.start_as_current_span("read_source_files"):
-        return _read_source_preview(ctx.deps.repo_path, ctx.deps.languages)
+async def read_source_summary(ctx: RunContext[SecurityDeps]) -> str:
+    """Get a summary of all source files with their function/class signatures.
+    Use read_specific_file to drill into any file that looks suspicious."""
+    with tracer.start_as_current_span("read_source_summary"):
+        return get_source_summary(ctx.deps.repo_path, ctx.deps.languages)
+
+
+@security_agent.tool
+async def read_specific_file(ctx: RunContext[SecurityDeps], file_path: str) -> str:
+    """Read the full content of a specific source file by its relative path.
+    Use this to drill into files identified as potentially problematic."""
+    with tracer.start_as_current_span("read_specific_file"):
+        return read_file_content(ctx.deps.repo_path, file_path)
 
 
 async def run_security_review(repo_path: Path, languages: list[str]) -> SecurityReviewResult:
@@ -103,30 +111,14 @@ async def run_security_review(repo_path: Path, languages: list[str]) -> Security
         lang_list = ", ".join(languages)
         result = await security_agent.run(
             f"Analyze this {lang_list} repository for security issues. "
-            "Run the static security scan and dependency audit tools, "
-            "then review the source code for additional concerns.",
+            "Run the static security scan and dependency audit tools. "
+            "Then use read_source_summary to review the codebase structure, "
+            "and read_specific_file to inspect any files that need closer review.",
             deps=deps,
             model=DEFAULT_MODEL,
         )
         logger.info("Security review agent complete")
         return result.output
-
-
-# --- Private helpers ---
-
-
-def _read_source_preview(repo_path: Path, languages: list[str]) -> str:
-    """Read a preview of source files for LLM fallback context."""
-    files = get_source_files(repo_path, languages, limit=20)
-    contents: list[str] = []
-    for f in files:
-        try:
-            text = f.read_text(errors="ignore")[:5000]
-            rel = f.relative_to(repo_path)
-            contents.append(f"--- {rel} ---\n{text}")
-        except Exception:
-            continue
-    return "\n\n".join(contents) if contents else "No source files found."
 
 
 async def _run_python_dependency_audit(repo_path: Path) -> str:

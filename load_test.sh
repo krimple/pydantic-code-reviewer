@@ -6,12 +6,11 @@
 set -euo pipefail
 
 CYCLES="${1:-1}"
-INTERVAL_SECONDS=120  # 2 minutes between launches
+INTERVAL_SECONDS=120 # 2 minutes between launches
 
 REPOS=(
   # Small/medium repos (all use 'main' as default branch)
   "https://github.com/pallets/click"
-  "https://github.com/encode/starlette"
   "https://github.com/pallets/markupsafe"
   "https://github.com/pallets/itsdangerous"
   "https://github.com/encode/uvicorn"
@@ -44,25 +43,25 @@ echo "=== Code Reviewer Load Test ===" | tee "$SUMMARY_LOG"
 echo "Cycles: $CYCLES" | tee -a "$SUMMARY_LOG"
 echo "Repos per cycle: $TOTAL_REPOS" | tee -a "$SUMMARY_LOG"
 echo "Interval: ${INTERVAL_SECONDS}s between launches" | tee -a "$SUMMARY_LOG"
-echo "Estimated time: $(( CYCLES * TOTAL_REPOS * INTERVAL_SECONDS / 60 )) minutes" | tee -a "$SUMMARY_LOG"
+echo "Estimated time: $((CYCLES * TOTAL_REPOS * INTERVAL_SECONDS / 60)) minutes" | tee -a "$SUMMARY_LOG"
 echo "Started at: $(date)" | tee -a "$SUMMARY_LOG"
 echo "---" | tee -a "$SUMMARY_LOG"
 
 PASS=0
 FAIL=0
 
-for (( cycle=1; cycle<=CYCLES; cycle++ )); do
+for ((cycle = 1; cycle <= CYCLES; cycle++)); do
   echo "" | tee -a "$SUMMARY_LOG"
   echo "=== Cycle $cycle of $CYCLES ===" | tee -a "$SUMMARY_LOG"
 
-  for (( i=0; i<TOTAL_REPOS; i++ )); do
+  for ((i = 0; i < TOTAL_REPOS; i++)); do
     REPO="${REPOS[$i]}"
     REPO_NAME=$(basename "$REPO")
     RUN_LOG="$LOG_DIR/${TIMESTAMP}_c${cycle}_${REPO_NAME}.log"
 
-    echo "[$(date +%H:%M:%S)] Cycle $cycle | Repo $((i+1))/$TOTAL_REPOS | $REPO_NAME" | tee -a "$SUMMARY_LOG"
+    echo "[$(date +%H:%M:%S)] Cycle $cycle | Repo $((i + 1))/$TOTAL_REPOS | $REPO_NAME" | tee -a "$SUMMARY_LOG"
 
-    if ./run "$REPO" > "$RUN_LOG" 2>&1; then
+    if ./run "$REPO" >"$RUN_LOG" 2>&1; then
       echo "  -> SUCCESS" | tee -a "$SUMMARY_LOG"
       PASS=$((PASS + 1))
     else

@@ -131,18 +131,18 @@ class TestPydanticTelemetryNormalizerProcessor:
 
     # --- message unpacking ---
 
-    def test_unpacks_simple_role_based_messages(self):
-        """Backward compat: messages with a top-level 'role' key are passed through."""
+    def test_unpacks_otel_format_messages(self):
+        """pydantic_ai.all_messages in OTel GenAI format (role/parts) are split by role."""
         packed = json.dumps([
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi"},
-            {"role": "system", "content": "be helpful"},
+            {"role": "user", "parts": [{"type": "text", "content": "hello"}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "hi"}], "finish_reason": "end_turn"},
+            {"role": "system", "parts": [{"type": "text", "content": "be helpful"}]},
         ])
         provider, exporter = _make_provider_and_exporter()
         tracer = provider.get_tracer("test")
         with tracer.start_as_current_span("invoke_agent review") as span:
             span.set_attribute("gen_ai.system", "anthropic")
-            span.set_attribute("all_messages_json", packed)
+            span.set_attribute("pydantic_ai.all_messages", packed)
         spans = exporter.get_finished_spans()
         attrs = spans[0].attributes
 
@@ -152,7 +152,8 @@ class TestPydanticTelemetryNormalizerProcessor:
         assert {m["role"] for m in input_msgs} == {"user", "system"}
         assert len(output_msgs) == 1
         assert output_msgs[0]["role"] == "assistant"
-        assert attrs.get("all_messages_json") is None
+        assert output_msgs[0]["finish_reason"] == "end_turn"
+        assert attrs.get("pydantic_ai.all_messages") is None
         provider.shutdown()
 
     def test_unpacks_pydantic_ai_native_messages(self):
@@ -190,7 +191,7 @@ class TestPydanticTelemetryNormalizerProcessor:
         tracer = provider.get_tracer("test")
         with tracer.start_as_current_span("agent run report") as span:
             span.set_attribute("gen_ai.system", "anthropic")
-            span.set_attribute("all_messages_json", packed)
+            span.set_attribute("pydantic_ai.all_messages", packed)
         spans = exporter.get_finished_spans()
         attrs = spans[0].attributes
 
@@ -212,7 +213,7 @@ class TestPydanticTelemetryNormalizerProcessor:
         assert output_msgs[1]["role"] == "assistant"
         assert output_msgs[1]["content"] == "Here is the final review."
 
-        assert attrs.get("all_messages_json") is None
+        assert attrs.get("pydantic_ai.all_messages") is None
         provider.shutdown()
 
     def test_skips_unpack_when_source_missing(self):
@@ -224,6 +225,29 @@ class TestPydanticTelemetryNormalizerProcessor:
         attrs = spans[0].attributes
         assert attrs.get("gen_ai.input.messages") is None
         assert attrs.get("gen_ai.output.messages") is None
+        provider.shutdown()
+
+    # --- final_result dropping ---
+
+    def test_drops_final_result(self):
+        provider, exporter = _make_provider_and_exporter()
+        tracer = provider.get_tracer("test")
+        with tracer.start_as_current_span("invoke_agent report") as span:
+            span.set_attribute("gen_ai.system", "anthropic")
+            span.set_attribute("final_result", '{"repo_url": "https://example.com"}')
+        spans = exporter.get_finished_spans()
+        attrs = spans[0].attributes
+        assert attrs.get("final_result") is None
+        provider.shutdown()
+
+    def test_does_not_fail_when_no_final_result(self):
+        provider, exporter = _make_provider_and_exporter()
+        tracer = provider.get_tracer("test")
+        with tracer.start_as_current_span("invoke_agent report") as span:
+            span.set_attribute("gen_ai.system", "anthropic")
+        spans = exporter.get_finished_spans()
+        attrs = spans[0].attributes
+        assert attrs.get("final_result") is None
         provider.shutdown()
 
     # --- global and per-feature disable flags ---
@@ -292,10 +316,10 @@ class TestPydanticTelemetryNormalizerProcessor:
         tracer = provider.get_tracer("test")
         with tracer.start_as_current_span("invoke_agent x") as span:
             span.set_attribute("gen_ai.system", "anthropic")
-            span.set_attribute("all_messages_json", packed)
+            span.set_attribute("pydantic_ai.all_messages", packed)
         spans = exporter.get_finished_spans()
         attrs = spans[0].attributes
-        assert attrs.get("all_messages_json") == packed
+        assert attrs.get("pydantic_ai.all_messages") == packed
         assert attrs.get("gen_ai.input.messages") is None
         provider.shutdown()
 

@@ -9,8 +9,8 @@ from pathlib import Path
 from pydantic_ai import Agent, RunContext
 
 from code_reviewer.config import DEFAULT_MODEL
-from code_reviewer.agent_context import current_agent_id, current_agent_name, current_agent_name
-from code_reviewer.languages import get_source_files
+from code_reviewer.agent_context import current_agent_id, current_agent_name
+from code_reviewer.languages import get_source_summary, read_file_content
 from code_reviewer.models.review import ComplexityReviewResult
 from code_reviewer.telemetry import get_tracer
 from code_reviewer.tool_config import (
@@ -39,7 +39,8 @@ complexity_agent = Agent(
         "You are a code quality reviewer. Analyze the tool outputs from "
         "cyclomatic complexity analysis and dead code detection for all detected languages. "
         "If any tool output is prefixed with [TOOL_UNAVAILABLE], perform that analysis "
-        "yourself using the provided source code. "
+        "yourself by first reviewing the source summary, then using read_specific_file "
+        "to inspect files that look complex or problematic. "
         "Also review source code for repeated/duplicated patterns. "
         "Summarize findings into a structured ComplexityReviewResult. "
         "Flag functions with complexity > 10 as HIGH, > 20 as CRITICAL."
@@ -50,32 +51,37 @@ complexity_agent = Agent(
 @complexity_agent.tool
 async def run_complexity_analysis(ctx: RunContext[ComplexityDeps]) -> str:
     """Run cyclomatic complexity analysis for all detected languages."""
-    source_content = _read_source_preview(ctx.deps.repo_path, ctx.deps.languages)
     return await run_tools_for_languages(
         COMPLEXITY_TOOLS,
         ctx.deps.languages,
         ctx.deps.repo_path,
-        fallback_context=source_content,
     )
 
 
 @complexity_agent.tool
 async def run_dead_code_detection(ctx: RunContext[ComplexityDeps]) -> str:
     """Run dead code detection for all detected languages."""
-    source_content = _read_source_preview(ctx.deps.repo_path, ctx.deps.languages)
     return await run_tools_for_languages(
         DEAD_CODE_TOOLS,
         ctx.deps.languages,
         ctx.deps.repo_path,
-        fallback_context=source_content,
     )
 
 
 @complexity_agent.tool
-async def read_source_for_duplication(ctx: RunContext[ComplexityDeps]) -> str:
-    """Read source files to check for repeated code patterns."""
-    with tracer.start_as_current_span("read_source_for_duplication"):
-        return _read_source_preview(ctx.deps.repo_path, ctx.deps.languages)
+async def read_source_summary(ctx: RunContext[ComplexityDeps]) -> str:
+    """Get a summary of all source files with their function/class signatures.
+    Use read_specific_file to drill into any file that needs closer inspection."""
+    with tracer.start_as_current_span("read_source_summary"):
+        return get_source_summary(ctx.deps.repo_path, ctx.deps.languages)
+
+
+@complexity_agent.tool
+async def read_specific_file(ctx: RunContext[ComplexityDeps], file_path: str) -> str:
+    """Read the full content of a specific source file by its relative path.
+    Use this to inspect files that appear complex or duplicated."""
+    with tracer.start_as_current_span("read_specific_file"):
+        return read_file_content(ctx.deps.repo_path, file_path)
 
 
 async def run_complexity_review(repo_path: Path, languages: list[str]) -> ComplexityReviewResult:
@@ -91,8 +97,9 @@ async def run_complexity_review(repo_path: Path, languages: list[str]) -> Comple
         lang_list = ", ".join(languages)
         result = await complexity_agent.run(
             f"Analyze this {lang_list} repository for code complexity issues. "
-            "Run the complexity analysis and dead code detection tools, "
-            "then review source code for duplicated patterns.",
+            "Run the complexity analysis and dead code detection tools. "
+            "Then use read_source_summary to review the codebase structure, "
+            "and read_specific_file to inspect any files that need closer review.",
             deps=deps,
             model=DEFAULT_MODEL,
         )
@@ -100,15 +107,3 @@ async def run_complexity_review(repo_path: Path, languages: list[str]) -> Comple
         return result.output
 
 
-def _read_source_preview(repo_path: Path, languages: list[str]) -> str:
-    """Read a preview of source files for LLM analysis."""
-    files = get_source_files(repo_path, languages, limit=20)
-    contents: list[str] = []
-    for f in files:
-        try:
-            text = f.read_text(errors="ignore")[:5000]
-            rel = f.relative_to(repo_path)
-            contents.append(f"--- {rel} ---\n{text}")
-        except Exception:
-            continue
-    return "\n\n".join(contents) if contents else "No source files found."

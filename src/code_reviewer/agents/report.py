@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 
@@ -16,10 +15,7 @@ from code_reviewer.models.review import (
     FinalReport,
     SecurityReviewResult,
 )
-from code_reviewer.telemetry import GEN_AI_SYSTEM, SESSION_CONVERSATION_ID, get_tracer
-from opentelemetry.semconv._incubating.attributes.gen_ai_attributes import (
-    GEN_AI_CONVERSATION_ID,
-)
+from code_reviewer.telemetry import get_tracer
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer("code-reviewer.report")
@@ -95,9 +91,8 @@ async def run_report_generation(
         attributes={
             "repo.url": repo_url,
             "repo.branch": branch,
-            GEN_AI_SYSTEM: "anthropic",
         },
-    ) as span:
+    ):
         logger.info("Starting report generation agent")
         current_agent_id.set("report_agent")
         current_agent_name.set("report_agent")
@@ -116,28 +111,10 @@ async def run_report_generation(
             "Then retrieve results from all three workstreams using the tools, "
             "and synthesize them into a FinalReport with an overall assessment."
         )
-        span.add_event("gen_ai.content.prompt", {
-            "gen_ai.prompt": prompt,
-            GEN_AI_CONVERSATION_ID: SESSION_CONVERSATION_ID,
-        })
 
         result = await report_agent.run(prompt, deps=deps, model=DEFAULT_MODEL)
-        report = result.output
-
         logger.info("Report generation agent complete")
-        markdown = _format_report_markdown(report)
-        span.add_event(
-            "gen_ai.content.completion",
-            {
-                "gen_ai.completion": markdown,
-                GEN_AI_CONVERSATION_ID: SESSION_CONVERSATION_ID,
-            },
-        )
-        span.set_attribute(
-            "gen_ai.output.messages",
-            json.dumps([{"role": "assistant", "content": markdown}]),
-        )
-        return report
+        return result.output
 
 
 def _format_report_markdown(report: FinalReport) -> str:

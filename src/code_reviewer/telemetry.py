@@ -106,28 +106,26 @@ def setup_telemetry() -> TracerProvider:
         PydanticTelemetryNormalizerProcessor(conversation_id=SESSION_CONVERSATION_ID)
     )
 
-    if honeycomb_api_key:
-        logger.debug("Configuring OTLP exporter -> %s/v1/traces", endpoint)
-        exporter = OTLPSpanExporter(
-            endpoint=f"{endpoint}/v1/traces",
-            headers={"x-honeycomb-team": honeycomb_api_key},
-        )
-        provider.add_span_processor(BatchSpanProcessor(exporter))
-    else:
-        logger.debug("No HONEYCOMB_API_KEY set, skipping OTLP exporter")
+    trace_headers = {"x-honeycomb-team": honeycomb_api_key} if honeycomb_api_key else {}
+    logger.debug("Configuring OTLP exporter -> %s/v1/traces (direct=%s)", endpoint, bool(honeycomb_api_key))
+    exporter = OTLPSpanExporter(
+        endpoint=f"{endpoint}/v1/traces",
+        headers=trace_headers,
+    )
+    provider.add_span_processor(BatchSpanProcessor(exporter))
 
     # --- OTel Logs Bridge ---
     # Bridges Python logging → OTel log records with trace/span context.
     # Log records emitted within an active span automatically carry
     # the trace_id and span_id, making them searchable alongside traces.
     logger_provider = LoggerProvider(resource=resource)
-    if honeycomb_api_key:
-        logger.debug("Configuring OTLP log exporter -> %s/v1/logs", endpoint)
-        log_exporter = OTLPLogExporter(
-            endpoint=f"{endpoint}/v1/logs",
-            headers={"x-honeycomb-team": honeycomb_api_key},
-        )
-        logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+    log_headers = {"x-honeycomb-team": honeycomb_api_key} if honeycomb_api_key else {}
+    logger.debug("Configuring OTLP log exporter -> %s/v1/logs (direct=%s)", endpoint, bool(honeycomb_api_key))
+    log_exporter = OTLPLogExporter(
+        endpoint=f"{endpoint}/v1/logs",
+        headers=log_headers,
+    )
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
     set_logger_provider(logger_provider)
 
     # Attach the OTel handler to the root logger so all Python log calls
@@ -150,8 +148,8 @@ def setup_telemetry() -> TracerProvider:
     # Ensure the OTLP env vars reflect our programmatic config so that
     # Agent.instrument_all() doesn't inherit a schemeless endpoint from
     # the parent shell (e.g. Claude Code sets api.honeycomb.io:443).
+    os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
     if honeycomb_api_key:
-        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
         os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = (
             f"x-honeycomb-team={honeycomb_api_key}"
         )
