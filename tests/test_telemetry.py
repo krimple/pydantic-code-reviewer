@@ -3,18 +3,13 @@
 import json
 from unittest.mock import patch
 
-from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from code_reviewer.telemetry import (
     GEN_AI_OPERATION_NAME,
-    GEN_AI_REQUEST_MODEL,
-    GEN_AI_SYSTEM,
     PydanticTelemetryNormalizerProcessor,
-    genai_span_attrs,
-    set_genai_response_attrs,
     setup_telemetry,
 )
 
@@ -37,24 +32,6 @@ class TestSetupTelemetry:
             provider = setup_telemetry()
             assert provider is not None
             provider.shutdown()
-
-
-class TestGenaiSpanAttrs:
-    def test_default_attrs(self):
-        attrs = genai_span_attrs()
-        assert attrs[GEN_AI_SYSTEM] == "anthropic"
-        assert attrs[GEN_AI_OPERATION_NAME] == "chat"
-        assert attrs[GEN_AI_REQUEST_MODEL] == "claude-sonnet-4-20250514"
-
-    def test_custom_attrs(self):
-        attrs = genai_span_attrs(
-            model="claude-opus-4-20250514",
-            operation="text_completion",
-            temperature=0.5,
-            max_tokens=2048,
-        )
-        assert attrs[GEN_AI_REQUEST_MODEL] == "claude-opus-4-20250514"
-        assert attrs[GEN_AI_OPERATION_NAME] == "text_completion"
 
 
 def _make_provider_and_exporter(config=None):
@@ -242,17 +219,3 @@ class TestPydanticTelemetryNormalizerProcessor:
         provider.shutdown()
 
 
-class TestSetGenaiResponseAttrs:
-    def test_sets_attributes(self):
-        provider = setup_telemetry()
-        tracer = trace.get_tracer("test")
-        with tracer.start_as_current_span("test-span") as span:
-            set_genai_response_attrs(
-                span,
-                model="claude-sonnet-4-20250514",
-                input_tokens=100,
-                output_tokens=50,
-                response_id="resp-123",
-                finish_reason="stop",
-            )
-        provider.shutdown()

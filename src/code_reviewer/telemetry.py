@@ -14,7 +14,8 @@ from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, Span, TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanProcessor
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace import SpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from pydantic_ai import Agent
@@ -23,16 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 # GenAI Semantic Convention attribute keys (v1.40.0)
-GEN_AI_SYSTEM = "gen_ai.system"
 GEN_AI_OPERATION_NAME = "gen_ai.operation.name"
-GEN_AI_REQUEST_MODEL = "gen_ai.request.model"
-GEN_AI_RESPONSE_MODEL = "gen_ai.response.model"
-GEN_AI_REQUEST_MAX_TOKENS = "gen_ai.request.max_tokens"
-GEN_AI_REQUEST_TEMPERATURE = "gen_ai.request.temperature"
-GEN_AI_USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
-GEN_AI_USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
-GEN_AI_RESPONSE_ID = "gen_ai.response.id"
-GEN_AI_RESPONSE_FINISH_REASONS = "gen_ai.response.finish_reasons"
 
 _DEFAULT_NORMALIZER_CONFIG: dict = {
     "enabled": True,
@@ -91,7 +83,10 @@ class PydanticTelemetryNormalizerProcessor(SpanProcessor):
         if config is None:
             config = _load_normalizer_config()
         self._enabled = config.get("enabled", True)
-        logger.debug("PydanticTelemetryNormalizerProcessor initialized (enabled=%s)", self._enabled)
+        logger.debug(
+            "PydanticTelemetryNormalizerProcessor initialized (enabled=%s)",
+            self._enabled,
+        )
 
         op_cfg = config.get("operation_name_mapping", {})
         self._op_name_enabled = op_cfg.get("enabled", True)
@@ -105,21 +100,33 @@ class PydanticTelemetryNormalizerProcessor(SpanProcessor):
         self._msg_enabled = msg_cfg.get("enabled", True)
         self._msg_source = msg_cfg.get("source_attribute", "all_messages_json")
         self._msg_input_attr = msg_cfg.get("input_attribute", "gen_ai.input.messages")
-        self._msg_output_attr = msg_cfg.get("output_attribute", "gen_ai.output.messages")
+        self._msg_output_attr = msg_cfg.get(
+            "output_attribute", "gen_ai.output.messages"
+        )
         self._msg_input_roles = set(msg_cfg.get("input_roles", ["user"]))
         self._msg_output_roles = set(msg_cfg.get("output_roles", ["assistant"]))
 
     def on_start(self, span: Span, parent_context: Context | None = None) -> None:
         if not self._enabled or not self._op_name_enabled:
             return
+
         name = span.name if hasattr(span, "name") else ""
         for prefix, operation in self._op_name_prefixes.items():
             if name.startswith(prefix):
-                logger.debug("on_start: span '%s' matched prefix '%s' -> operation '%s'", name, prefix, operation)
-                span.set_attribute(GEN_AI_OPERATION_NAME, operation)
-                break
+                logger.debug(
+                    "on_start: span '%s' matched prefix '%s' -> operation '%s'",
+                    name,
+                    prefix,
+                    operation,
+                )
+                if not span.attributes.get(GEN_AI_OPERATION_NAME):
+                    # if not already set
+                    span.set_attribute(GEN_AI_OPERATION_NAME, operation)
+                    break
         else:
-            logger.debug("on_start: span '%s' did not match any operation name prefix", name)
+            logger.debug(
+                "on_start: span '%s' did not match any operation name prefix", name
+            )
 
     def on_end(self, span: ReadableSpan) -> None:
         if not self._enabled:
@@ -129,14 +136,20 @@ class PydanticTelemetryNormalizerProcessor(SpanProcessor):
             logger.debug("on_end: span '%s' has no attributes, skipping", span.name)
             return
         if not any(str(k).startswith("gen_ai.") for k in attrs.keys()):
-            logger.debug("on_end: span '%s' has no gen_ai.* attributes, skipping", span.name)
+            logger.debug(
+                "on_end: span '%s' has no gen_ai.* attributes, skipping", span.name
+            )
             return
-        logger.debug("on_end: processing span '%s' with %d attributes", span.name, len(attrs))
+        logger.debug(
+            "on_end: processing span '%s' with %d attributes", span.name, len(attrs)
+        )
         try:
             self._rename_attributes(attrs)
             self._unpack_messages(attrs)
         except TypeError:
-            logger.debug("on_end: span '%s' attributes are frozen, skipping mutations", span.name)
+            logger.debug(
+                "on_end: span '%s' attributes are frozen, skipping mutations", span.name
+            )
 
     def _rename_attributes(self, attrs) -> None:
         if not self._rename_enabled:
@@ -201,18 +214,22 @@ def setup_telemetry() -> TracerProvider:
     - OTEL_LOG_USER_PROMPTS: Log user prompts as span events
     """
     if not _is_truthy(os.getenv("CLAUDE_CODE_ENABLE_TELEMETRY", "true")):
-        logger.debug("Telemetry disabled via CLAUDE_CODE_ENABLE_TELEMETRY, returning no-op provider")
+        logger.debug(
+            "Telemetry disabled via CLAUDE_CODE_ENABLE_TELEMETRY, returning no-op provider"
+        )
         provider = TracerProvider()
         trace.set_tracer_provider(provider)
         return provider
 
     service_name = os.getenv("OTEL_SERVICE_NAME", "code-reviewer")
     honeycomb_api_key = os.getenv("HONEYCOMB_API_KEY", "")
-    endpoint = os.getenv(
-        "OTEL_EXPORTER_OTLP_ENDPOINT", "https://api.honeycomb.io"
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://api.honeycomb.io")
+    logger.debug(
+        "Telemetry config: service=%s, endpoint=%s, api_key=%s",
+        service_name,
+        endpoint,
+        "set" if honeycomb_api_key else "NOT SET",
     )
-    logger.debug("Telemetry config: service=%s, endpoint=%s, api_key=%s",
-                 service_name, endpoint, "set" if honeycomb_api_key else "NOT SET")
 
     # Ensure the endpoint has a scheme — the parent shell (e.g. Claude Code)
     # may set OTEL_EXPORTER_OTLP_ENDPOINT without https://.
@@ -258,7 +275,9 @@ def setup_telemetry() -> TracerProvider:
 
     # Attach the OTel handler to the root logger so all Python log calls
     # (including our logger.debug() calls) become OTel log records.
-    otel_handler = LoggingHandler(level=logging.WARNING, logger_provider=logger_provider)
+    otel_handler = LoggingHandler(
+        level=logging.WARNING, logger_provider=logger_provider
+    )
     logging.getLogger().addHandler(otel_handler)
     logger.debug("OTel Logs Bridge attached to root logger")
 
@@ -267,7 +286,9 @@ def setup_telemetry() -> TracerProvider:
     # the parent shell (e.g. Claude Code sets api.honeycomb.io:443).
     if honeycomb_api_key:
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
-        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"x-honeycomb-team={honeycomb_api_key}"
+        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = (
+            f"x-honeycomb-team={honeycomb_api_key}"
+        )
 
     trace.set_tracer_provider(provider)
 
@@ -281,37 +302,3 @@ def setup_telemetry() -> TracerProvider:
 def get_tracer(name: str = "code-reviewer") -> trace.Tracer:
     """Get a tracer instance."""
     return trace.get_tracer(name)
-
-
-def genai_span_attrs(
-    model: str = "claude-sonnet-4-20250514",
-    operation: str = "chat",
-    temperature: float = 0.0,
-    max_tokens: int = 4096,
-) -> dict[str, str | float | int]:
-    """Return standard GenAI semantic convention attributes for a span."""
-    return {
-        GEN_AI_SYSTEM: "anthropic",
-        GEN_AI_OPERATION_NAME: operation,
-        GEN_AI_REQUEST_MODEL: model,
-        GEN_AI_REQUEST_TEMPERATURE: temperature,
-        GEN_AI_REQUEST_MAX_TOKENS: max_tokens,
-    }
-
-
-def set_genai_response_attrs(
-    span: trace.Span,
-    *,
-    model: str,
-    input_tokens: int,
-    output_tokens: int,
-    response_id: str = "",
-    finish_reason: str = "stop",
-) -> None:
-    """Set GenAI response attributes on a span."""
-    span.set_attribute(GEN_AI_RESPONSE_MODEL, model)
-    span.set_attribute(GEN_AI_USAGE_INPUT_TOKENS, input_tokens)
-    span.set_attribute(GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)
-    if response_id:
-        span.set_attribute(GEN_AI_RESPONSE_ID, response_id)
-    span.set_attribute(GEN_AI_RESPONSE_FINISH_REASONS, [finish_reason])
