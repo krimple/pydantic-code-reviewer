@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
 from pathlib import Path
 
 from opentelemetry import trace
@@ -240,14 +241,18 @@ def setup_telemetry() -> TracerProvider:
     endpoint = endpoint.rstrip("/").replace(":443", "")
     logger.debug("Final OTLP endpoint: %s", endpoint)
 
-    resource = Resource.create({"service.name": service_name})
+    conversation_id = str(uuid.uuid4())
+    resource = Resource.create({
+        "service.name": service_name,
+        "gen_ai.conversation.id": conversation_id,
+    })
 
     provider = TracerProvider(resource=resource)
 
     # Add the GenAI operation name processor so agent/tool spans
     # get the required gen_ai.operation.name attribute.
-    logger.debug("Adding PydanticTelemetryNormalizerProcessor")
-    provider.add_span_processor(PydanticTelemetryNormalizerProcessor())
+    # logger.debug("Adding PydanticTelemetryNormalizerProcessor")
+    # provider.add_span_processor(PydanticTelemetryNormalizerProcessor())
 
     if honeycomb_api_key:
         logger.debug("Configuring OTLP exporter -> %s/v1/traces", endpoint)
@@ -293,6 +298,8 @@ def setup_telemetry() -> TracerProvider:
     trace.set_tracer_provider(provider)
 
     logger.debug("Instrumenting all pydantic-ai agents")
+    # This is vendor-specific built-in library instrumentation
+    # It is not "opentelemetry auto instrumentation" by strict definition
     Agent.instrument_all()
 
     logger.debug("Telemetry setup complete")

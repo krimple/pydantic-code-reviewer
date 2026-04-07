@@ -1,0 +1,54 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+  transform:
+    trace_statements:
+      - context: span
+        statements:
+          - >-
+            set(attributes["gen_ai.tool.call.result"],
+            attributes["tool_response"]) where
+            attributes["tool_response"] != nil
+          - >-
+            delete_key(attributes, "tool_response") where
+            attributes["tool_response"] != nil
+          - >-
+            set(attributes["gen_ai.tool.call.arguments"],
+            attributes["tool_arguments"]) where
+            attributes["tool_arguments"] != nil
+          - >-
+            delete_key(attributes, "tool_arguments") where
+            attributes["tool_arguments"] != nil
+          - >-
+            set(attributes["gen_ai.agent.name"],
+            attributes["agent_name"]) where
+            attributes["agent_name"] != nil
+          - >-
+            delete_key(attributes, "agent_name") where
+            attributes["agent_name"] != nil
+
+  messages_splitter: {}
+
+exporters:
+  otlphttp:
+    endpoint: ${env:HONEYCOMB_API_ENDPOINT}
+    headers:
+      x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
+
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [messages_splitter, transform, batch]
+      exporters: [otlphttp, debug]
