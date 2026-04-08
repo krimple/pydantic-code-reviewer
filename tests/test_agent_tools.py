@@ -88,26 +88,37 @@ class TestSecurityTools:
             assert "dependencies" in result
 
     @pytest.mark.asyncio
-    async def test_read_source_files(self, tmp_path):
-        from code_reviewer.agents.security import read_source_files
+    async def test_read_source_summary(self, tmp_path):
+        from code_reviewer.agents.security import read_source_summary
+
+        (tmp_path / "app.py").write_text("import os\ndef hello():\n    print('hello')\n")
+        deps = SecurityDeps(repo_path=tmp_path)
+        ctx = _make_ctx(deps)
+
+        result = await read_source_summary(ctx)
+        assert "app.py" in result
+
+    @pytest.mark.asyncio
+    async def test_read_specific_file(self, tmp_path):
+        from code_reviewer.agents.security import read_specific_file
 
         (tmp_path / "app.py").write_text("import os\nprint('hello')\n")
         deps = SecurityDeps(repo_path=tmp_path)
         ctx = _make_ctx(deps)
 
-        result = await read_source_files(ctx)
+        result = await read_specific_file(ctx, "app.py")
         assert "app.py" in result
         assert "import os" in result
 
     @pytest.mark.asyncio
-    async def test_read_source_files_empty(self, tmp_path):
-        from code_reviewer.agents.security import read_source_files
+    async def test_read_specific_file_not_found(self, tmp_path):
+        from code_reviewer.agents.security import read_specific_file
 
         deps = SecurityDeps(repo_path=tmp_path)
         ctx = _make_ctx(deps)
 
-        result = await read_source_files(ctx)
-        assert "No Python files" in result
+        result = await read_specific_file(ctx, "missing.py")
+        assert "not found" in result.lower()
 
 
 class TestComplexityTools:
@@ -150,15 +161,27 @@ class TestComplexityTools:
             assert "error" in result.lower()
 
     @pytest.mark.asyncio
-    async def test_read_source_for_duplication(self, tmp_path):
-        from code_reviewer.agents.complexity import read_source_for_duplication
+    async def test_read_source_summary(self, tmp_path):
+        from code_reviewer.agents.complexity import read_source_summary
 
         (tmp_path / "module.py").write_text("def foo():\n    pass\n")
         deps = ComplexityDeps(repo_path=tmp_path)
         ctx = _make_ctx(deps)
 
-        result = await read_source_for_duplication(ctx)
+        result = await read_source_summary(ctx)
         assert "module.py" in result
+
+    @pytest.mark.asyncio
+    async def test_read_specific_file(self, tmp_path):
+        from code_reviewer.agents.complexity import read_specific_file
+
+        (tmp_path / "module.py").write_text("def foo():\n    pass\n")
+        deps = ComplexityDeps(repo_path=tmp_path)
+        ctx = _make_ctx(deps)
+
+        result = await read_specific_file(ctx, "module.py")
+        assert "module.py" in result
+        assert "def foo" in result
 
 
 class TestDocumentationTools:
@@ -226,7 +249,7 @@ class TestDocumentationTools:
         ctx = _make_ctx(deps)
 
         result = await read_source_structure(ctx)
-        assert "No Python source files" in result
+        assert "No source files found" in result
 
 
 class TestReportTools:

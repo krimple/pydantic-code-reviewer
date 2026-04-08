@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic_ai import Agent, RunContext
 
 from code_reviewer.config import DEFAULT_MODEL
+from code_reviewer.file_utils import get_source_summary, read_file_content
 from code_reviewer.models.review import DocumentationReviewResult
 from code_reviewer.telemetry import get_tracer
 
@@ -56,7 +57,7 @@ async def find_documentation_files(ctx: RunContext[DocsDeps]) -> str:
 
 @documentation_agent.tool
 async def read_documentation(ctx: RunContext[DocsDeps]) -> str:
-    """Read the content of documentation files."""
+    """Read the content of documentation files (capped per file to save tokens)."""
     with tracer.start_as_current_span("read_docs"):
         doc_extensions = {".md", ".rst", ".txt"}
         doc_files = []
@@ -64,38 +65,27 @@ async def read_documentation(ctx: RunContext[DocsDeps]) -> str:
             if f.is_file() and f.suffix in doc_extensions:
                 doc_files.append(f)
 
-        doc_files = doc_files[:15]  # Limit
+        doc_files = doc_files[:10]  # Limit
         contents = []
         for f in doc_files:
-            try:
-                text = f.read_text(errors="ignore")[:8000]
-                rel = f.relative_to(ctx.deps.repo_path)
-                contents.append(f"--- {rel} ---\n{text}")
-            except Exception:
-                continue
+            rel = str(f.relative_to(ctx.deps.repo_path))
+            contents.append(read_file_content(ctx.deps.repo_path, rel, max_tokens=2000))
         return "\n\n".join(contents) if contents else "No documentation content found."
 
 
 @documentation_agent.tool
 async def read_source_structure(ctx: RunContext[DocsDeps]) -> str:
-    """Read source code structure to compare against documentation."""
+    """Get a summary of all source files with their function/class signatures.
+    Use read_specific_file to drill into any file for detailed doc comparison."""
     with tracer.start_as_current_span("read_source_structure"):
-        py_files = sorted(ctx.deps.repo_path.rglob("*.py"))[:30]
-        structure = []
-        for f in py_files:
-            rel = f.relative_to(ctx.deps.repo_path)
-            try:
-                text = f.read_text(errors="ignore")
-                # Extract just class/function definitions
-                lines = [
-                    line.strip()
-                    for line in text.splitlines()
-                    if line.strip().startswith(("class ", "def ", "async def "))
-                ]
-                structure.append(f"{rel}: {', '.join(lines[:10])}")
-            except Exception:
-                structure.append(str(rel))
-        return "\n".join(structure) if structure else "No Python source files found."
+        return get_source_summary(ctx.deps.repo_path)
+
+
+@documentation_agent.tool
+async def read_specific_file(ctx: RunContext[DocsDeps], file_path: str) -> str:
+    """Read the full content of a specific file for detailed documentation comparison."""
+    with tracer.start_as_current_span("read_specific_file"):
+        return read_file_content(ctx.deps.repo_path, file_path)
 
 
 async def run_documentation_review(repo_path: Path) -> DocumentationReviewResult:

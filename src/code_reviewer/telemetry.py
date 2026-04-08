@@ -254,28 +254,27 @@ def setup_telemetry() -> TracerProvider:
     # logger.debug("Adding PydanticTelemetryNormalizerProcessor")
     # provider.add_span_processor(PydanticTelemetryNormalizerProcessor())
 
+    headers = {}
     if honeycomb_api_key:
-        logger.debug("Configuring OTLP exporter -> %s/v1/traces", endpoint)
-        exporter = OTLPSpanExporter(
-            endpoint=f"{endpoint}/v1/traces",
-            headers={"x-honeycomb-team": honeycomb_api_key},
-        )
-        provider.add_span_processor(BatchSpanProcessor(exporter))
-    else:
-        logger.debug("No HONEYCOMB_API_KEY set, skipping OTLP exporter")
+        headers["x-honeycomb-team"] = honeycomb_api_key
+    logger.debug("Configuring OTLP exporter -> %s/v1/traces", endpoint)
+    exporter = OTLPSpanExporter(
+        endpoint=f"{endpoint}/v1/traces",
+        headers=headers,
+    )
+    provider.add_span_processor(BatchSpanProcessor(exporter))
 
     # --- OTel Logs Bridge ---
     # Bridges Python logging → OTel log records with trace/span context.
     # Log records emitted within an active span automatically carry
     # the trace_id and span_id, making them searchable alongside traces.
     logger_provider = LoggerProvider(resource=resource)
-    if honeycomb_api_key:
-        logger.debug("Configuring OTLP log exporter -> %s/v1/logs", endpoint)
-        log_exporter = OTLPLogExporter(
-            endpoint=f"{endpoint}/v1/logs",
-            headers={"x-honeycomb-team": honeycomb_api_key},
-        )
-        logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+    logger.debug("Configuring OTLP log exporter -> %s/v1/logs", endpoint)
+    log_exporter = OTLPLogExporter(
+        endpoint=f"{endpoint}/v1/logs",
+        headers=headers,
+    )
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
     set_logger_provider(logger_provider)
 
     # Attach the OTel handler to the root logger so all Python log calls

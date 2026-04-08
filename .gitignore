@@ -18,3 +18,4 @@ htmlcov/
 cloned_repos/
 .idea/
 otel-collector/build/
+load_test_logs/

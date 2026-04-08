@@ -14,7 +14,7 @@ build:
 	$(OCB) --config $(CONFIG)
 
 run: build
-	env $$(grep -v '^\s*#' ../.env | xargs) $(BINARY) --config $(COLLECTOR_CONFIG)
+	env $$(grep -v '^\s*#' .env | xargs) $(BINARY) --config $(COLLECTOR_CONFIG)
 
 clean:
 	rm -rf $(BUILD_DIR)

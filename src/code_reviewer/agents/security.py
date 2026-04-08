@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic_ai import Agent, RunContext
 
 from code_reviewer.config import DEFAULT_MODEL
+from code_reviewer.file_utils import cap_tool_output, get_source_summary, read_file_content
 from code_reviewer.models.review import SecurityReviewResult
 from code_reviewer.telemetry import get_tracer
 
@@ -27,6 +28,8 @@ security_agent = Agent(
     instructions=(
         "You are a security reviewer. Analyze the tool outputs from bandit "
         "(static security analysis) and pip-audit (dependency vulnerability check). "
+        "Also review the source summary, then use read_specific_file to inspect "
+        "any files that look suspicious. "
         "Summarize findings into a structured SecurityReviewResult. "
         "Rate severity accurately: CRITICAL for RCE/injection, HIGH for auth issues, "
         "MEDIUM for information disclosure, LOW for best-practice violations."
@@ -48,7 +51,8 @@ async def run_bandit_scan(ctx: RunContext[SecurityDeps]) -> str:
                 text=True,
                 timeout=120,
             )
-            return result.stdout or result.stderr or "No issues found."
+            output = result.stdout or result.stderr or "No issues found."
+            return cap_tool_output(output)
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
             return f"Bandit scan error: {e}"
 
@@ -96,19 +100,19 @@ async def run_dependency_audit(ctx: RunContext[SecurityDeps]) -> str:
 
 
 @security_agent.tool
-async def read_source_files(ctx: RunContext[SecurityDeps]) -> str:
-    """Read Python source files for manual security review."""
-    with tracer.start_as_current_span("read_source_files"):
-        py_files = list(ctx.deps.repo_path.rglob("*.py"))[:20]  # Limit to 20 files
-        contents = []
-        for f in py_files:
-            try:
-                text = f.read_text(errors="ignore")[:5000]  # Limit per file
-                rel = f.relative_to(ctx.deps.repo_path)
-                contents.append(f"--- {rel} ---\n{text}")
-            except Exception:
-                continue
-        return "\n\n".join(contents) if contents else "No Python files found."
+async def read_source_summary(ctx: RunContext[SecurityDeps]) -> str:
+    """Get a summary of all source files with their function/class signatures.
+    Use read_specific_file to drill into any file that looks suspicious."""
+    with tracer.start_as_current_span("read_source_summary"):
+        return get_source_summary(ctx.deps.repo_path)
+
+
+@security_agent.tool
+async def read_specific_file(ctx: RunContext[SecurityDeps], file_path: str) -> str:
+    """Read the full content of a specific source file by its relative path.
+    Use this to drill into files identified as potentially problematic."""
+    with tracer.start_as_current_span("read_specific_file"):
+        return read_file_content(ctx.deps.repo_path, file_path)
 
 
 async def run_security_review(repo_path: Path) -> SecurityReviewResult:
@@ -120,8 +124,9 @@ async def run_security_review(repo_path: Path) -> SecurityReviewResult:
         deps = SecurityDeps(repo_path=repo_path)
         result = await security_agent.run(
             "Analyze this repository for security issues. "
-            "Run the bandit scan and dependency audit tools, "
-            "then review the source code for additional concerns.",
+            "Run the bandit scan and dependency audit tools. "
+            "Then review the source summary and use read_specific_file "
+            "to inspect any files that look suspicious.",
             deps=deps,
             model=DEFAULT_MODEL,
         )

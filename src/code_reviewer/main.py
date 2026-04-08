@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+
 import asyncio
 import json
 import logging
 import os
 import sys
 
-from dotenv import load_dotenv
 
 from opentelemetry._logs import get_logger_provider
 

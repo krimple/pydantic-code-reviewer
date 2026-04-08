@@ -57,12 +57,12 @@ class TestComplexityErrorBranches:
             assert result == "No dead code found."
 
     @pytest.mark.asyncio
-    async def test_read_duplication_empty(self, tmp_path):
-        from code_reviewer.agents.complexity import read_source_for_duplication
+    async def test_read_source_summary_empty(self, tmp_path):
+        from code_reviewer.agents.complexity import read_source_summary
 
         ctx = _make_ctx(ComplexityDeps(repo_path=tmp_path))
-        result = await read_source_for_duplication(ctx)
-        assert "No Python files" in result
+        result = await read_source_summary(ctx)
+        assert "No source files found" in result
 
 
 class TestSecurityErrorBranches:

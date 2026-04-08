@@ -7,7 +7,7 @@ receivers:
         endpoint: 0.0.0.0:4318
 
 processors:
-  batch: {}
+  batch:
 
   transform:
     trace_statements:
@@ -35,7 +35,7 @@ processors:
             delete_key(attributes, "agent_name") where
             attributes["agent_name"] != nil
 
-  messages_splitter: {}
+  messages_splitter:
 
 exporters:
   otlphttp:
@@ -44,11 +44,14 @@ exporters:
       x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
 
   debug:
-    verbosity: basic
+    verbosity: detailed
 
 service:
+  telemetry:
+    logs:
+      level: debug
   pipelines:
     traces:
       receivers: [otlp]
       processors: [messages_splitter, transform, batch]
-      exporters: [otlphttp, debug]
+      exporters: [debug, otlphttp]
