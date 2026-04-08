@@ -71,14 +71,24 @@ Required environment variables:
 
 ## Usage
 
-The simplest way to run the reviewer is with the `./run` script, which activates the virtual environment automatically:
+The simplest way to run the reviewer is with the `./execute-agent` script, which activates the virtual environment automatically:
 
 ```bash
 # Review a repository
-./run https://github.com/user/repo
+./execute-agent https://github.com/user/repo
 
 # Uses a default demo repo if no URL is provided
-./run
+./execute-agent
+```
+
+To run the full load test (starts an OTel collector, reviews multiple repos, then tears down the collector):
+
+```bash
+# Run 1 cycle (default)
+./run-tests
+
+# Run 3 cycles
+./run-tests 3
 ```
 
 You can also run it directly:

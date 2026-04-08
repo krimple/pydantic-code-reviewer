@@ -1,15 +1,37 @@
 #!/bin/bash
-# Load tester for code-reviewer
-# Launches reviews of 20 public Python repos, one every ~2 minutes, for N cycles.
-# Usage: ./load_test.sh [cycles]   (default: 1 cycle, ~40 minutes)
+# Launches the OTel collector, reviews a set of public repos, then tears down the collector.
+# Usage: ./run_tests.sh [cycles]   (default: 1 cycle)
 
 set -euo pipefail
 
+COLLECTOR_PORT=4317
+COLLECTOR_DIR="otel-collector"
+
+# Start the collector in the background
+echo "Starting OTel collector..."
+make -C "$COLLECTOR_DIR" run &
+COLLECTOR_PID=$!
+
+# Kill the collector on exit
+trap 'echo "Stopping collector (PID $COLLECTOR_PID)..."; kill $COLLECTOR_PID 2>/dev/null; wait $COLLECTOR_PID 2>/dev/null' EXIT
+
+# Wait for the collector to be ready
+echo "Waiting for collector on port $COLLECTOR_PORT..."
+while ! nc -z localhost "$COLLECTOR_PORT" 2>/dev/null; do
+  if ! kill -0 "$COLLECTOR_PID" 2>/dev/null; then
+    echo "Collector process died before becoming ready."
+    exit 1
+  fi
+  sleep 0.5
+done
+echo "Collector is ready."
+
+# --- Load test ---
+
 CYCLES="${1:-1}"
-INTERVAL_SECONDS=1 # 2 minutes between launches
+INTERVAL_SECONDS=1
 
 REPOS=(
-  # Small/medium repos (all use 'main' as default branch)
   "https://github.com/pallets/click"
   "https://github.com/encode/starlette"
   "https://github.com/pallets/markupsafe"
@@ -29,7 +51,6 @@ REPOS=(
   "https://github.com/encode/django-rest-framework"
   "https://github.com/pytest-dev/pytest"
   "https://github.com/pydantic/pydantic"
-  # One larger repo
   "https://github.com/pallets/flask"
 )
 
@@ -62,7 +83,7 @@ for ((cycle = 1; cycle <= CYCLES; cycle++)); do
 
     echo "[$(date +%H:%M:%S)] Cycle $cycle | Repo $((i + 1))/$TOTAL_REPOS | $REPO_NAME" | tee -a "$SUMMARY_LOG"
 
-    if ./run "$REPO" >"$RUN_LOG" 2>&1; then
+    if ./execute-agent "$REPO" >"$RUN_LOG" 2>&1; then
       echo "  -> SUCCESS" | tee -a "$SUMMARY_LOG"
       PASS=$((PASS + 1))
     else
@@ -71,7 +92,6 @@ for ((cycle = 1; cycle <= CYCLES; cycle++)); do
       FAIL=$((FAIL + 1))
     fi
 
-    # Sleep between launches (skip after the last repo of the last cycle)
     if [[ $cycle -lt $CYCLES || $i -lt $((TOTAL_REPOS - 1)) ]]; then
       echo "  Waiting ${INTERVAL_SECONDS}s before next launch..."
       sleep "$INTERVAL_SECONDS"
